@@ -1,3 +1,4 @@
+import base64
 import requests
 import time
 
@@ -16,10 +17,6 @@ def run_code(request):
     language_id = request.data.get("language_id")
     stdin = request.data.get("stdin", "")
 
-    # -----------------------------
-    # Validate input
-    # -----------------------------
-
     if not code:
         return Response(
             {"error": "Code is required"},
@@ -35,9 +32,16 @@ def run_code(request):
     try:
         language_id = int(language_id)
     except (ValueError, TypeError):
-
         return Response(
             {"error": "Invalid language ID"},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    if stdin is None:
+        stdin = ""
+    elif not isinstance(stdin, str):
+        return Response(
+            {"error": "stdin must be a string"},
             status=status.HTTP_400_BAD_REQUEST
         )
 
@@ -47,9 +51,9 @@ def run_code(request):
     # -----------------------------
 
     submission_data = {
-        "source_code": code,
+        "source_code": base64.b64encode(code.encode("utf-8")).decode("ascii"),
         "language_id": language_id,
-        "stdin": stdin
+        "stdin": base64.b64encode(stdin.encode("utf-8")).decode("ascii")
     }
 
 
@@ -57,6 +61,7 @@ def run_code(request):
 
         response = requests.post(
             f"{JUDGE0_URL}/submissions",
+            params={"base64_encoded": "true"},
             json=submission_data,
             timeout=15
         )
@@ -102,6 +107,15 @@ def run_code(request):
                 timeout=10
             )
 
+            if not result_response.ok:
+                return Response(
+                    {
+                        "error": "Unable to read Judge0 result",
+                        "judge0_status": result_response.status_code,
+                        "judge0_response": result_response.text
+                    },
+                    status=status.HTTP_502_BAD_GATEWAY
+                )
 
             result = result_response.json()
 
@@ -123,7 +137,8 @@ def run_code(request):
 
         return Response(
             {
-                "error": "Code execution timed out"
+                "error": "Code execution timed out",
+                "details": "The program did not finish. Check for an input loop or provide all expected stdin values."
             },
             status=status.HTTP_408_REQUEST_TIMEOUT
         )
